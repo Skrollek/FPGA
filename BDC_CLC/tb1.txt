@@ -1,0 +1,105 @@
+`timescale 1ns / 1ps
+
+module bcd_calculator_tb;
+
+  logic clk;
+  logic [9:0] SW;
+  logic [2:0] KEY;
+
+  logic [6:0] HEX0, HEX1, HEX2, HEX3, HEX4, HEX5;
+
+  bcd_calculator dut (
+    .clk(clk),
+    .SW(SW),
+    .KEY(KEY),
+    .HEX0(HEX0),
+    .HEX1(HEX1),
+    .HEX2(HEX2),
+    .HEX3(HEX3),
+    .HEX4(HEX4),
+    .HEX5(HEX5)
+  );
+
+  initial clk = 0;
+  always #10 clk = ~clk;
+
+  task press_key(input int idx);
+    begin
+      KEY[idx] = 1;
+      #40;
+      KEY[idx] = 0;
+      #40;
+    end
+  endtask
+
+  task set_digit(input [3:0] digit);
+    begin
+      SW[3:0] = digit;
+      #20;
+    end
+  endtask
+
+  task reset();
+    begin
+      SW[9] = 1; // aktywny reset
+      #100;
+      SW[9] = 0;
+      #50;
+    end
+  endtask
+
+  initial begin
+    // inicjalizacja
+    SW = 0;
+    KEY = 0;
+    #50;
+    reset();
+
+    // Test 1: 12 + 34
+    $display("\n=== TEST 1: 12 + 34 ===");
+    // ARG1: wprowadzanie 12
+    set_digit(1); press_key(0);  // 1
+    set_digit(2); press_key(0);  // 2
+    press_key(1);                // operator (ADD domyślnie, bo SW[4]=0)
+
+    // ARG2: wprowadzanie 34
+    set_digit(3); press_key(0);  // 3
+    set_digit(4); press_key(0);  // 4
+    press_key(2);                // wynik
+    #100;
+    $display("HEX -> %b %b %b %b %b %b", HEX5, HEX4, HEX3, HEX2, HEX1, HEX0);
+
+    // Test 2: 99 - 45
+    $display("\n=== TEST 2: 99 - 45 ===");
+    reset();
+    set_digit(9); press_key(0);
+    set_digit(9); press_key(0);
+    SW[4] = 1;                   // ustaw SUB
+    press_key(1);                // wybór operatora (SUB)
+    SW[4] = 0;
+    set_digit(4); press_key(0);
+    set_digit(5); press_key(0);
+    press_key(2);                // wynik
+    #100;
+    $display("HEX -> %b %b %b %b %b %b", HEX5, HEX4, HEX3, HEX2, HEX1, HEX0);
+
+    // Test 3: 500 + 500
+    $display("\n=== TEST 3: 500 + 500 ===");
+    reset();
+    set_digit(5); press_key(0);
+    set_digit(0); press_key(0);
+    set_digit(0); press_key(0);
+    press_key(1);                // ADD
+    set_digit(5); press_key(0);
+    set_digit(0); press_key(0);
+    set_digit(0); press_key(0);
+    press_key(2);                // wynik
+    #100;
+    $display("HEX -> %b %b %b %b %b %b", HEX5, HEX4, HEX3, HEX2, HEX1, HEX0);
+
+    #200;
+    $display("\n=== KONIEC TESTÓW ===");
+    $stop;
+  end
+
+endmodule

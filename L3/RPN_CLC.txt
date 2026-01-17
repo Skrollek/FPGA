@@ -1,0 +1,273 @@
+module hex7seg (
+    input  logic [3:0] hex,   
+    output logic [6:0] seg   
+);
+    always_comb begin
+        case (hex)
+            4'h0: seg = ~7'h3F;
+            4'h1: seg = ~7'h06;
+            4'h2: seg = ~7'h5B;
+            4'h3: seg = ~7'h4F;
+            4'h4: seg = ~7'h66;
+            4'h5: seg = ~7'h6D;
+            4'h6: seg = ~7'h7D;
+            4'h7: seg = ~7'h07;
+            4'h8: seg = ~7'h7F;
+            4'h9: seg = ~7'h6F;
+            4'hA: seg = ~7'h77;
+            4'hB: seg = ~7'h7C;
+            4'hC: seg = ~7'h58;
+            4'hD: seg = ~7'h5E;
+            4'hE: seg = ~7'h79;
+            4'hF: seg = ~7'h71;
+            default: seg = 7'b0;
+        endcase
+    end
+endmodule
+
+module synchronizer#(parameter N=2)(
+	input clk,
+	input sig,
+	output synsig
+);
+	reg [N-1:0] buffer;
+	assign synsig = buffer[N-1];
+	always @(posedge clk)
+		buffer <= {buffer[N-2:0], sig};
+endmodule
+
+module synchronizers#(parameter M=1, N=2)(
+	input  clk,
+	input  [M-1:0] sig,
+	output [M-1:0] outsig
+);
+	genvar k;
+	generate
+		for (k = 0; k < M; k = k+1) begin : blk
+		synchronizer#(N) syn(clk, sig[k], outsig[k]);
+		end
+	endgenerate
+endmodule
+
+module memory(input clk,
+              input write,
+              input [9:0]  raddr, waddr,
+              input [15:0] wdata,
+              output logic [15:0] rdata);
+  logic [15:0] mem [1023 : 0];
+  always_ff @(posedge clk) begin
+    if(write) mem[waddr] <= wdata;
+	 rdata <= mem[raddr];
+  end
+endmodule
+
+module stack(input clk,
+             input rst,
+             input [15:0] data,
+             input push,
+             input write,
+             input pop,
+             output logic [15:0] top,
+             output empty,
+             output single);
+ 
+  logic [9:0]  cntr; 
+  logic [9:0]  cntr_next;
+  
+  logic load;
+  assign load = push || write;
+  
+  assign single = cntr == 10'b0;
+  assign empty  = cntr == 10'b1111111111;
+  
+  assign cntr_next = push ? cntr + 10'b1 :
+                     pop  ? cntr - 10'b1 : cntr;
+  
+  always_ff @(posedge clk, posedge rst) begin
+    if(rst) begin
+      cntr <= 10'b1111111111;
+    end else begin
+      cntr <= cntr_next;
+    end
+  end
+  
+  memory m1(clk, load, cntr_next, cntr_next, data, top);
+endmodule
+
+module detect(input clk, rst, a, output out);
+	reg q;
+	always @(posedge clk or posedge rst)
+		if (rst) q <= 1'b0;
+		else q <= a;
+	assign out = !q && a;
+endmodule
+
+module rpn_top (
+    input  logic        clk,
+    input  logic [9:0]  SW,
+    input  logic [3:0]  KEY,
+    output logic [6:0]  HEX0,
+    output logic [6:0]  HEX1,
+    output logic [6:0]  HEX2,
+    output logic [6:0]  HEX3,
+  	output logic [6:0]  HEX4,
+  	output logic [6:0]  HEX5,
+    output logic [9:0]  LEDR
+);
+  	logic [3:0] key_sync;
+  synchronizers #(4,2) syncs(clk, ~KEY, key_sync);
+
+	logic push, add, mul, rst;
+	assign push = key_sync[0];
+	assign add  = key_sync[1];
+	assign mul  = key_sync[2];
+	assign rst  = key_sync[3];
+  
+    logic push_sig;
+    logic write_sig;
+    logic pop_sig;
+    logic [15:0] data_to_stack;
+    logic [15:0] top;
+  
+    stack s0 (
+      .clk(clk),
+        .rst(rst),
+      	.data(data_to_stack),
+        .push(push_sig),
+        .write(write_sig),
+        .pop(pop_sig),
+        .top(top),
+        .empty(empty),
+        .single(single)
+    );
+  
+    logic empty, single;
+  	assign LEDR[0] = empty;
+  	assign LEDR[1] = single;
+  	assign LEDR[9:2] = 8'b0;
+  
+	hex7seg h0(SW[3:0], HEX0);
+	hex7seg h1(SW[7:4], HEX1);
+	hex7seg h2(top[3:0], HEX2);
+	hex7seg h3(top[7:4], HEX3);
+  	hex7seg h4(top[11:8], HEX4);
+ 	hex7seg h5(top[15:12], HEX5);
+  
+  	typedef enum logic [1:0] {
+        IDLE,
+        PUSH,
+      	CALC,
+      	DONE
+    } state_t;
+
+  state_t state, state_next;
+  always_comb begin
+    case (state)
+      IDLE : state_next = push ? PUSH :
+                          add || mul ? CALC : IDLE;
+      PUSH : state_next = DONE;
+      CALC : state_next = DONE;
+      DONE : state_next = !(mul || add || push) ? IDLE : DONE;
+    endcase
+  end
+  always_ff @(posedge clk, posedge rst) begin
+    if(rst) begin
+      state <= IDLE;
+    end else begin
+      state <= state_next;
+    end
+  end
+  	
+  logic [15:0] op;
+  always_ff @(posedge clk, posedge rst) begin
+    if(rst) begin
+      op <= 16'b0;
+    end else if(state == IDLE) begin
+      op <= top;
+    end else if(state == DONE) begin
+      op <= 16'b0;
+	 end
+  end
+  
+  logic mul_op;
+  always_ff @(posedge clk, posedge rst) begin
+    if(rst) begin
+      mul_op <= 1'b0;
+    end else begin
+      mul_op <= state == IDLE ? mul :
+                state == DONE ? 1'b0 : mul_op;
+    end
+  end
+      
+  assign push_sig  = state == PUSH;
+  assign pop_sig   = state == IDLE && (add || mul);
+  assign write_sig = state == CALC;
+  logic [31:0] mul_res;
+  unsigned_multiply mult1(op, top, mul_res);
+  always_comb begin
+    case (state)
+      IDLE : data_to_stack = {6'b0, SW[9:0]};
+      PUSH : data_to_stack = {6'b0, SW[9:0]};
+      CALC : data_to_stack = mul_op ? mul_res[15:0] : op + top;
+      DONE : data_to_stack = {6'b0, SW[9:0]};
+    endcase
+  end
+endmodule
+
+// Quartus Prime Verilog Template
+// Unsigned multiply
+
+module unsigned_multiply
+#(parameter WIDTH=16)
+(
+	input [WIDTH-1:0] dataa,
+	input [WIDTH-1:0] datab,
+	output [2*WIDTH-1:0] dataout
+);
+
+	assign dataout = dataa * datab;
+
+endmodule
+
+
+
+module FirstDE1Project(
+
+	//////////// CLOCK //////////
+	input 		          		CLOCK2_50,
+	input 		          		CLOCK3_50,
+	input 		          		CLOCK4_50,
+	input 		          		CLOCK_50,
+
+	//////////// SEG7 //////////
+	output		     [6:0]		HEX0,
+	output		     [6:0]		HEX1,
+	output		     [6:0]		HEX2,
+	output		     [6:0]		HEX3,
+	output		     [6:0]		HEX4,
+	output		     [6:0]		HEX5,
+
+	//////////// KEY //////////
+	input 		     [3:0]		KEY,
+
+	//////////// LED //////////
+	output		     [9:0]		LEDR,
+
+	//////////// SW //////////
+	input 		     [9:0]		SW
+);
+
+
+
+//=======================================================
+//  REG/WIRE declarations
+//=======================================================
+
+
+//=======================================================
+//  Structural coding
+//=======================================================
+rpn_top r1(CLOCK2_50, SW, KEY, HEX0, HEX1, HEX2, HEX3, HEX4, HEX5, LEDR);
+ 
+
+endmodule

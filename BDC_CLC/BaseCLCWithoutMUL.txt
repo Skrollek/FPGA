@@ -1,0 +1,310 @@
+module hex7seg (
+    input  logic [3:0] hex,   
+    output logic [6:0] seg   
+);
+    always_comb begin
+        case (hex)
+            4'h0: seg = ~7'h3F;
+            4'h1: seg = ~7'h06;
+            4'h2: seg = ~7'h5B;
+            4'h3: seg = ~7'h4F;
+            4'h4: seg = ~7'h66;
+            4'h5: seg = ~7'h6D;
+            4'h6: seg = ~7'h7D;
+            4'h7: seg = ~7'h07;
+            4'h8: seg = ~7'h7F;
+            4'h9: seg = ~7'h6F;
+            4'hA: seg = ~7'h77;
+            4'hB: seg = ~7'h7C;
+            4'hC: seg = ~7'h58;
+            4'hD: seg = ~7'h5E;
+            4'hE: seg = ~7'h79;
+            4'hF: seg = ~7'h71;
+            default: seg = 7'b0;
+        endcase
+    end
+endmodule
+
+module detect(input clk, rst, a, output out);
+reg q;
+always @(posedge clk or posedge rst)
+if (rst) q <= 1'b0;
+else q <= a;
+assign out = !q && a;
+endmodule
+
+
+module synchronizer#(parameter N=2)(
+	input clk,
+	input sig,
+	output synsig
+);
+	reg [N-1:0] buffer;
+	assign synsig = buffer[N-1];
+	always @(posedge clk)
+		buffer <= {buffer[N-2:0], sig};
+endmodule
+
+module synchronizers#(parameter M=1, N=2)(
+	input clk,
+	input [M-1:0] sig,
+	output [M-1:0] outsig
+);
+	genvar k;
+	generate
+		for (k = 0; k < M; k = k+1) begin : blk
+		synchronizer#(N) syn(clk, sig[k], outsig[k]);
+		end
+	endgenerate
+endmodule
+
+
+module BCD_full_adder(input  [3:0] BCD_A,
+                      input  [3:0] BCD_B,
+                      input        carry_in,
+                      output [3:0] BCD_RES,
+                      output       carry_out);
+  
+  logic [4:0] S;
+  assign S = BCD_A + BCD_B + {4'b0, carry_in};
+  assign carry_out = S[4] || (S[3] && S[2]) || (S[3] && S[1]);
+  assign BCD_RES = S + {1'b0, carry_out, carry_out, 1'b0};
+endmodule
+
+module complement(input [3:0] BCD_IN,
+                  input carry,
+                  output [3:0] BCD_OUT);
+  
+  assign BCD_OUT = ~BCD_IN + 4'b1010 + {3'b0, carry};
+endmodule
+
+module add_sub_BCD(input  [3:0] BCD_A,
+                   input  [3:0] BCD_B,
+                   input        carry_in,
+                   input        sub,
+                   output [3:0] BCD_C,
+                   output       carry_out,
+                   output       sign);
+  
+  logic [3:0] B_comp;
+  complement comp0(BCD_B, 1'b0, B_comp);
+  
+  logic [3:0] op1;
+  assign op1 = sub ? B_comp : BCD_B;
+  
+  logic [3:0] add_res;
+  logic carry;
+  BCD_full_adder fa0(BCD_A, op1, carry_in, add_res, carry);
+  
+  assign BCD_C = add_res;
+  assign carry_out =  carry;
+  assign sign = sub ? !carry : 1'b0;
+  
+endmodule
+
+module BCD_number_adder #(parameter WIDTH = 6) (
+  					 input  [WIDTH*4 - 1 : 0] BCD_num_a,
+                     input  [WIDTH*4 - 1 : 0] BCD_num_b,
+                     input                    sub,
+ 					 output [WIDTH*4 - 1 : 0] BCD_num_c,
+  					 output carry,
+					 output sign);
+  logic [WIDTH-1:-1] carries;
+  assign carries[-1] = sub;
+  logic [WIDTH-1:0] signs;
+  genvar i;
+  generate
+  for(i = 0; i < WIDTH; i++) begin : gen_add_sub
+    add_sub_BCD asb(BCD_num_a[4*(i+1) - 1 : 4*i],
+                    BCD_num_b[4*(i+1) - 1 : 4*i],
+                    carries[i-1],
+                    sub,
+                    BCD_num_c[4*(i+1) - 1 : 4*i],
+                    carries[i],
+                    signs[i]);
+                    
+  end
+  endgenerate
+  assign carry = carries[WIDTH-1];
+  assign sign  = signs[WIDTH-1];
+endmodule
+
+module bcd_calculator(input logic clk,
+					  input logic [9:0] SW, 
+                      input logic [2:0] KEY, 
+                      output logic [6:0] HEX0, HEX1, HEX2, HEX3, HEX4, HEX5
+);
+  
+  logic rst;
+  assign rst = SW[9];
+  logic [23:0] arg1, arg1_next, arg2, arg2_next, res;
+  
+  logic [3:0] selected_digit;
+  logic digit_pushed, op_pushed;
+  assign selected_digit = SW[3:0];
+  assign digit_pushed   = KEY[0] && selected_digit <= 4'd9;
+  assign op_pushed      = KEY[1];
+
+  
+  //arg1 section
+  
+  always_comb begin
+    case(state)
+      ARG1: arg1_next = digit_pushed ? {arg1[19:0], selected_digit} : arg1;
+      ARG2: arg1_next = op_pushed ? res : arg1;
+      OP:   arg1_next = arg1;
+      RESULT: arg1_next = state_next == ARG1 ? {20'b0, selected_digit} : arg1;
+      default : arg1_next = arg1;
+    endcase
+  end
+  
+  always_ff @(posedge clk) begin
+    if(rst) begin
+      arg1 <= 24'b0;
+    end else begin
+      arg1 <= arg1_next;
+    end
+  end
+  
+  //arg2 section
+  always_comb begin
+    case (state)
+      ARG1: arg2_next = arg2;
+      ARG2: arg2_next = digit_pushed ? {arg2[19:0], selected_digit} : arg2;
+      OP:   arg2_next = digit_pushed ? {20'b0, selected_digit} : arg2;
+      RESULT: arg2_next = state_next == ARG1 ? 24'b0 : arg2;
+      default: arg2_next = arg2;
+  endcase
+end
+  always_ff @(posedge clk) begin
+    if(rst) begin
+      arg2 <= 24'b0;
+    end else begin
+      arg2 <= arg2_next;
+    end
+  end
+
+  //saving op section
+  typedef enum {NONE, ADD, SUB} op_t;
+  op_t op_pending;
+  op_t op_pending_next;
+  logic op_pending_en;
+  
+  assign op_pending_en = op_pushed;
+  always_comb begin
+    case(state) 
+      ARG1:   op_pending_next = SW[4] ? SUB : ADD;
+      ARG2:   op_pending_next = SW[4] ? SUB : ADD;
+      RESULT: op_pending_next = NONE;
+      default : op_pending_next = op_pending;
+    endcase
+  end  
+  always_ff @(posedge clk) begin
+    if(rst) begin
+      op_pending <= NONE;
+    end else if(op_pending_en) begin
+      op_pending <= op_pending_next;
+    end
+  end
+
+  logic op_to_adder;
+  assign op_to_adder = op_pending == SUB;
+  
+  BCD_number_adder adder0(arg1, arg2, op_to_adder, res);
+  
+  //fsm section
+  typedef enum {ARG1, ARG2, RESULT, OP} state_t;
+  state_t state;
+  state_t state_next;
+   
+  always_comb begin
+    case(state) 
+      ARG1:   state_next = KEY[1] ? ARG2   : state;
+      ARG2:   state_next = KEY[2] ? RESULT : 
+                           KEY[1] ? OP     : state;
+      RESULT: state_next = digit_pushed ? ARG1 : state; 
+      OP:     state_next = digit_pushed ? ARG2 : state;
+      default : state_next = state;
+    endcase
+  end
+  
+  always_ff @(posedge clk) begin
+    if(rst) begin
+      state <= ARG1;
+    end else begin
+      state <= state_next;
+    end
+  end
+ 
+  //display section
+  logic [23:0] disp; 
+  always_comb begin
+    case(state)
+      RESULT:  disp = res;
+      ARG1:    disp = arg1;
+      ARG2:    disp = arg2;
+      OP:      disp = arg1;
+      default  disp = arg1;
+    endcase
+  end
+  hex7seg seg0(.hex(disp[3:0]), .seg(HEX0));
+  hex7seg seg1(.hex(disp[7:4]), .seg(HEX1));
+  hex7seg seg2(.hex(disp[11:8]), .seg(HEX2));
+  hex7seg seg3(.hex(disp[15:12]), .seg(HEX3));
+  hex7seg seg4(.hex(disp[19:16]), .seg(HEX4));
+  hex7seg seg5(.hex(disp[23:20]), .seg(HEX5));
+  
+endmodule
+
+
+module FirstDE1Project(
+
+	//////////// CLOCK //////////
+	input 		          		CLOCK2_50,
+	input 		          		CLOCK3_50,
+	input 		          		CLOCK4_50,
+	input 		          		CLOCK_50,
+
+	//////////// SEG7 //////////
+	output		     [6:0]		HEX0,
+	output		     [6:0]		HEX1,
+	output		     [6:0]		HEX2,
+	output		     [6:0]		HEX3,
+	output		     [6:0]		HEX4,
+	output		     [6:0]		HEX5,
+
+	//////////// KEY //////////
+	input 		     [3:0]		KEY,
+
+	//////////// LED //////////
+	output		     [9:0]		LEDR,
+
+	//////////// SW //////////
+	input 		     [9:0]		SW
+);
+
+
+
+//=======================================================
+//  REG/WIRE declarations
+//=======================================================
+logic [3:0] key_sync;
+synchronizers #(.M(4), .N(2)) synchs0 (CLOCK2_50, ~KEY, key_sync);
+
+logic [2:0] key_d;
+
+genvar i;
+generate
+	for( i = 0; i < 3; i++) begin : gen_key_posedge
+		detect d(CLOCK2_50, key_sync[3], key_sync[i], key_d[i]);
+	end
+endgenerate
+
+
+//=======================================================
+//  Structural coding
+//=======================================================
+bcd_calculator bc0(CLOCK2_50, SW, key_d, HEX0, HEX1, HEX2, HEX3, HEX4, HEX5);
+ 
+
+endmodule

@@ -1,0 +1,171 @@
+
+module counter #(parameter RESET_AT,
+                 parameter WIDTH)
+  (input clk,
+   input nrst,
+   input enable,
+   output [WIDTH-1:0] count);
+  
+  logic [WIDTH-1:0] cntr;
+  logic [WIDTH-1:0] cntr_next;
+  
+  assign cntr_next = cntr == (RESET_AT - 1) ? {WIDTH{1'b0}} : cntr + 1;
+  
+  always_ff @(posedge clk, negedge nrst) begin
+    if(!nrst) begin
+      cntr <= {WIDTH{1'b0}};
+    end else if(enable) begin
+      cntr <= cntr_next;
+    end
+  end
+  assign count = cntr;
+endmodule
+
+module hex7seg (
+    input  logic [3:0] hex,   
+    output logic [6:0] seg   
+);
+    always_comb begin
+        case (hex)
+            4'h0: seg = ~7'h3F;
+            4'h1: seg = ~7'h06;
+            4'h2: seg = ~7'h5B;
+            4'h3: seg = ~7'h4F;
+            4'h4: seg = ~7'h66;
+            4'h5: seg = ~7'h6D;
+            4'h6: seg = ~7'h7D;
+            4'h7: seg = ~7'h07;
+            4'h8: seg = ~7'h7F;
+            4'h9: seg = ~7'h6F;
+            4'hA: seg = ~7'h77;
+            4'hB: seg = ~7'h7C;
+            4'hC: seg = ~7'h58;
+            4'hD: seg = ~7'h5E;
+            4'hE: seg = ~7'h79;
+            4'hF: seg = ~7'h71;
+            default: seg = 7'b0;
+        endcase
+    end
+endmodule
+
+module ten_mili_s(input clk,
+                  input nrst,
+                  output incr);
+  logic [19:0] c1;
+  counter #( .RESET_AT(500000), .WIDTH(20)) delay ( .clk(clk), .nrst(nrst), .enable(1'b1), .count(c1)); 
+  assign incr = c1 == (500000 - 1);
+endmodule
+
+module synchronizer#(parameter N=2)(
+input clk,
+input sig,
+output synsig
+);
+reg [N-1:0] buffer;
+assign synsig = buffer[N-1];
+always @(posedge clk)
+buffer <= {buffer[N-2:0], sig};
+endmodule
+
+
+module clock(input clk,
+             input nrst,
+             output [6:0] HEX0,
+             output [6:0] HEX1,
+             output [6:0] HEX2,
+             output [6:0] HEX3,
+             output [6:0] HEX4,
+             output [6:0] HEX5);
+  
+  logic enable;
+  ten_mili_s slow_clk(clk, nrst, enable);
+  
+  logic [3:0] hundreds_seconds;
+  logic i1;
+  assign i1 = enable;
+  
+  counter #( .RESET_AT(10), .WIDTH(4)) c1 (clk, nrst, i1, hundreds_seconds); 
+
+  logic [3:0] tenths_seconds;
+  logic i2;
+  assign i2 = enable && hundreds_seconds == 4'd9;
+  
+  counter #( .RESET_AT(10), .WIDTH(4)) c2 (clk, nrst, i2, tenths_seconds);
+  
+  logic [3:0] seconds_1;
+  logic i3;
+  assign i3 = enable && hundreds_seconds == 4'd9 && tenths_seconds == 4'd9;
+  
+  counter #( .RESET_AT(10), .WIDTH(4)) c3 (clk, nrst, i3, seconds_1);
+  
+  logic [2:0] seconds_2;
+  logic i4;
+  assign i4 = enable && hundreds_seconds == 4'd9 && tenths_seconds == 4'd9 && seconds_1 == 4'd9;
+  
+  counter #( .RESET_AT(6), .WIDTH(3)) c4 (clk, nrst, i4, seconds_2);
+  
+  logic [3:0] minute_1;
+  logic i5;
+  assign i5 = enable && hundreds_seconds == 4'd9 && tenths_seconds == 4'd9 && seconds_1 == 4'd9 && seconds_2 == 3'd5;
+  counter #( .RESET_AT(10), .WIDTH(4)) c5 (clk, nrst, i5, minute_1);
+  
+  logic [2:0] minute_2;
+  logic i6;
+  assign i6 = enable && hundreds_seconds == 4'd9 && 
+             tenths_seconds == 4'd9 && 
+             seconds_1 == 4'd9 && 
+             seconds_2 == 3'd5 &&
+             minute_1  == 4'd9;
+  
+  counter #( .RESET_AT(6), .WIDTH(3)) c6 (clk, nrst, i6, minute_2);
+
+
+  hex7seg h2s1 (.hex(hundreds_seconds), .seg(HEX0));
+  hex7seg h2s2 (.hex(tenths_seconds),   .seg(HEX1));
+  hex7seg h2s3 (.hex(seconds_1),        .seg(HEX2));
+  hex7seg h2s4 (.hex({1'b0,seconds_2}), .seg(HEX3));
+  hex7seg h2s5 (.hex(minute_1),         .seg(HEX4));
+  hex7seg h2s6 (.hex({1'b0,minute_2}),  .seg(HEX5));
+
+endmodule
+
+module FirstDE1Project(
+
+	//////////// CLOCK //////////
+	input 		          		CLOCK2_50,
+	input 		          		CLOCK3_50,
+	input 		          		CLOCK4_50,
+	input 		          		CLOCK_50,
+
+	//////////// SEG7 //////////
+	output		     [6:0]		HEX0,
+	output		     [6:0]		HEX1,
+	output		     [6:0]		HEX2,
+	output		     [6:0]		HEX3,
+	output		     [6:0]		HEX4,
+	output		     [6:0]		HEX5,
+
+	//////////// KEY //////////
+	input 		     [3:0]		KEY,
+
+	//////////// LED //////////
+	output		     [9:0]		LEDR,
+
+	//////////// SW //////////
+	input 		     [9:0]		SW
+);
+
+
+
+//=======================================================
+//  REG/WIRE declarations
+//=======================================================
+
+
+//=======================================================
+//  Structural coding
+//=======================================================
+	clock tm (CLOCK2_50, KEY[0], HEX0, HEX1, HEX2, HEX3, HEX4, HEX5);
+
+
+endmodule

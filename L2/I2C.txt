@@ -1,0 +1,181 @@
+`timescale 1ns/1ps
+
+module arbiter(
+	input clk, rst, start,
+	input [7:0] address,
+	inout bus,
+	output collision, sending, won
+);
+  localparam IDLE    = 2'b00;
+  localparam COLL    = 2'b01;
+  localparam SEND    = 2'b10;
+  localparam WON     = 2'b11;
+  
+  
+  reg [2:0] state;
+  reg [2:0] state_next;
+  
+  wire idle_to_send;
+  assign idle_to_send = start;
+  
+  wire idle_to_coll;
+  assign idle_to_coll = bus === 1'b0; // z jakiegoś powodu jak się da "==" to nie działa, dziwne...
+  
+  wire coll_to_idle;
+  assign coll_to_idle = cntr == 3'b0;
+  
+  wire send_to_won;
+  assign send_to_won  = cntr == 3'b0;
+  
+  wire send_to_coll;
+  assign send_to_coll = bus != address[cntr];
+    
+  wire won_to_idle;
+  assign won_to_idle  = 1'b1;
+
+
+  always @* begin
+    case (state) 
+      IDLE: state_next = idle_to_send ? SEND : 
+        				 idle_to_coll ? COLL : IDLE;
+      COLL: state_next = coll_to_idle ? IDLE : COLL;
+      SEND: state_next = send_to_won  ? WON  : 
+        				 send_to_coll ? COLL : SEND;
+      WON:  state_next = won_to_idle  ? IDLE : WON;
+      default : state_next = IDLE;
+    endcase
+  end
+  
+  always @(posedge clk, posedge rst) begin
+    if(rst) begin
+      state <= IDLE;
+    end else begin
+      state <= state_next;
+    end
+  end
+  
+  reg [2:0] cntr;
+  wire cntr_en;
+  assign cntr_en = state == COLL || state == SEND;
+  always @(posedge clk, posedge rst) begin
+    if(rst) begin
+    	cntr <= 3'd7;
+    end else if(cntr_en) begin
+    	cntr <= cntr - 3'b1;
+    end 
+  end
+  
+  assign bus = (state == IDLE && start) ? 1'b0 : 
+    		   (state == SEND) ? address[cntr] : 1'bz;
+  
+  assign collision = state == COLL;
+  assign won       = state == WON;
+  assign sending   = state == SEND;
+  
+endmodule
+
+`timescale 1ns/1ps
+
+module tb_arbiter;
+
+  reg clk;
+  reg rst;
+
+  reg start1;
+  reg [7:0] addr1;
+  wire collision1, sending1, won1;
+
+  reg start2;
+  reg [7:0] addr2;
+  wire collision2, sending2, won2;
+
+  wand bus;
+
+  arbiter arb1 (
+    .clk(clk),
+    .rst(rst),
+    .start(start1),
+    .address(addr1),
+    .bus(bus),
+    .collision(collision1),
+    .sending(sending1),
+    .won(won1)
+  );
+
+  arbiter arb2 (
+    .clk(clk),
+    .rst(rst),
+    .start(start2),
+    .address(addr2),
+    .bus(bus),
+    .collision(collision2),
+    .sending(sending2),
+    .won(won2)
+  );
+
+  initial clk = 0;
+  always #10 clk = ~clk;
+
+  initial begin
+    rst = 1;
+    start1 = 0;
+    start2 = 0;
+    addr1 = 8'hA0; 
+    addr2 = 8'h50; 
+    #25;
+    rst = 0;
+
+    //---------------------------------------------------
+    // Test Case 1: Arbiter 1 starts before Arbiter 2
+    //---------------------------------------------------
+    $display("==== Test Case 1: Arbiter 1 starts first ====");
+
+    start1 = 1;
+    @(posedge clk);
+    start1 = 0;
+
+    // Arbiter 2 starts later
+    start2 = 1;
+    @(posedge clk);
+    start2 = 0;
+
+    repeat(10) begin
+      @(posedge clk);
+          $display("Arb1: won=%b coll=%b send=%b", won1, collision1, sending1);
+          $display("Arb2: won=%b coll=%b send=%b", won2, collision2, sending2);
+      $display("Bus %D", bus);
+    end
+
+
+    //---------------------------------------------------
+    // Test Case 2: Both arbiters start simultaneously
+    //---------------------------------------------------
+    rst = 1;
+    #20;
+    rst = 0;
+    #20;
+
+    $display("\n==== Test Case 2: Both arbiters start simultaneously ====");
+
+    start1 = 1;
+    start2 = 1;
+    @(posedge clk);
+    start1 = 0;
+    start2 = 0;
+    
+    repeat(9) begin
+      @(posedge clk);
+          $display("Arb1: won=%b coll=%b send=%b", won1, collision1, sending1);
+          $display("Arb2: won=%b coll=%b send=%b", won2, collision2, sending2);
+      $display("Bus %D", bus);
+    end
+
+    if (won2 && !won1)
+      $display("Arbiter 2 (lower address) correctly won the arbitration.");
+    else
+      $display("Arbitration failed: expected arbiter 2 to win.");
+
+    $finish;
+  end
+
+endmodule

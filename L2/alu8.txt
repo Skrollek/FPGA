@@ -1,0 +1,74 @@
+
+module alu8 (
+input logic [7:0] a,
+input logic [7:0] b,
+input logic [2:0] ctrl, 
+output logic [7:0] y
+);
+logic [7:0] temp;
+
+
+always_comb begin
+case (ctrl[2:1])
+2'b00: temp = a + b; 
+2'b01: temp = a - b; 
+2'b10: temp = a & b; 
+2'b11: temp = a | b; 
+default: temp = 8'h00;
+endcase
+
+
+if (ctrl[0])
+y = ~temp; 
+else
+y = temp;
+end
+endmodule
+
+module tb_alu8;
+logic [7:0] a, b, y_ref, y_out;
+logic [2:0] ctrl;
+
+logic [7:0] mem [0:1023];
+
+
+alu8 uut(.a(a), .b(b), .ctrl(ctrl), .y(y_out));
+
+
+integer i = 0;
+
+
+initial begin
+$readmemh("alu_tests.hex", mem);
+
+
+$display("--- Testbench: ALU 8-bit ---");
+$display("Format pliku: A B CTRL EXPECTED (każdy bajt w hex) --- 0xFF 0xFF 0xFF 0xFF = koniec");
+
+
+i = 0;
+forever begin
+a = mem[i];
+b = mem[i+1];
+ctrl = mem[i+2][2:0];
+y_ref = mem[i+3];
+
+
+if (a == 8'hff && b == 8'hff && mem[i+2] == 8'hff && y_ref == 8'hff) begin
+$display("Koniec danych testowych.");
+end
+
+
+#1;
+if (y_out !== y_ref)
+$display("BŁĄD: A=%h B=%h CTRL=%b -> Y=%h (oczekiwano %h)", a, b, ctrl, y_out, y_ref);
+else
+$display("OK: A=%h B=%h CTRL=%b -> Y=%h", a, b, ctrl, y_out);
+
+
+i += 4;
+end
+  
+$finish;
+end
+endmodule
